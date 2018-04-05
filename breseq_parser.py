@@ -9,12 +9,12 @@ import pathlib
 from typing import *
 import argparse
 import os
-
+from pprint import pprint
 from functools import partial
 
 print = partial(print, flush = True)
 Table = List[Dict[str, str]]
-# TODO expand user dolder with ~ for the -d flag
+# TODO expand user folder with ~ for the -d flag
 DEBUG = os.name == 'nt'
 
 if not DEBUG:
@@ -58,11 +58,11 @@ else:
 		def __init__(self, a, b, c):
 			self.directory = a
 			self.filetype = b
-			self.prefix = c
+			self.filename = c
 
 
-	test_folder = r"C:\Users\Progi\Documents\Projects\cooperlab\breseq_output"
-	args = Parser(test_folder, 'xlsx', 'test_output')
+	test_folder = pathlib.Path(__file__).parent / 'test_data'
+	args = Parser(test_folder, 'xlsx', test_folder.with_name('test_output.xlsx'))
 
 
 def toNumber(string: str) -> int:
@@ -99,6 +99,7 @@ class Breseq:
 	def parseOutputFolder(self, folder: pathlib.Path) -> Tuple[Table, Table, Table]:
 
 		index_file = folder / "output" / "index.html"
+		print("\tIndex File: ", index_file)
 		if not index_file.exists():
 			print("\tThe index.html file is missing. Ignoring folder.")
 			return [], [], []
@@ -163,6 +164,7 @@ class Breseq:
 			snp_table = normal_table
 		else:
 			snp_table = poly_table
+		snp_table = normal_table + poly_table
 		snp_header_soup, coverage_soup, junction_soup = self._extractIndexFileTables(soup)
 
 		return snp_header_soup, snp_table, coverage_soup, junction_soup
@@ -174,11 +176,17 @@ class Breseq:
 
 		for tag in rows:
 			values = [v.text for v in tag.find_all('td')]
+
 			if len(values) > 1:
 				row = {k: v for k, v in zip(headers, values)}
 				row['Sample'] = sample_name
 
 				row['position'] = toNumber(row['position'])
+				try:
+					row['freq %'] = float(row['freq'][:-1])
+					row.pop('freq')
+				except KeyError:
+					pass
 				converted_table.append(row)
 		return converted_table
 
@@ -231,26 +239,27 @@ class Breseq:
 	@staticmethod
 	def generateComparisonTable(snp_table: pandas.DataFrame) -> Optional[pandas.DataFrame]:
 		# Sample	annotation	description	evidence	gene	mutation	position	seq id
-		all_samples = set(snp_table['Sample'].values)
-		columns = [unidecode(i) for i in snp_table.columns.values]
-		if 'seq id' not in columns:
-			print("Columns: ", columns)
-			return None
-		sequence_group = snp_table.groupby(by = ['seq id', 'position'])
-		comparison = list()
-		for element, sequence in sequence_group:
-			seq_id, position = element
-			samples = sequence['Sample'].values
+		try:
+			all_samples = set(snp_table['Sample'].values)
+			columns = [unidecode(i) for i in snp_table.columns.values]
 
-			char = 'X' if len(samples) == 1 else '.'
+			sequence_group = snp_table.groupby(by = ['seq id', 'position'])
+			comparison = list()
+			for element, sequence in sequence_group:
+				seq_id, position = element
+				samples = sequence['Sample'].values
 
-			comparison_row = {k: char for k in samples}
-			comparison_row['seq id'] = seq_id
-			comparison_row['position'] = position
-			comparison_row['all'] = '.' if len(samples) == len(all_samples) else ''
-			comparison.append(comparison_row)
+				char = 'X' if len(samples) == 1 else '.'
 
-		comparison_table = pandas.DataFrame(comparison)
+				comparison_row = {k: char for k in samples}
+				comparison_row['seq id'] = seq_id
+				comparison_row['position'] = position
+				comparison_row['all'] = '.' if len(samples) == len(all_samples) else ''
+				comparison.append(comparison_row)
+
+			comparison_table = pandas.DataFrame(comparison)
+		except:
+			comparison_table = None
 		return comparison_table
 
 	def _formatComparisonWorksheet(self, worksheet):
@@ -300,8 +309,10 @@ class Breseq:
 		self.coverage_table.to_excel(writer, 'coverage', index = include_index)
 
 		self.junction_table.to_excel(writer, 'junctions', index = include_index)
-
-		comparison_table = self.generateComparisonTable(self.snp_table)
+		try:
+			comparison_table = self.generateComparisonTable(self.snp_table)
+		except KeyError:
+			comparison_table = None
 		if comparison_table is not None:
 			comparison_table.to_excel(writer, 'snp comparison', index = include_index)
 
@@ -345,7 +356,8 @@ if __name__ == "__main__":
 	data_folder = args.directory
 	output_file = pathlib.Path(args.filename)
 	if not data_folder or not pathlib.Path(data_folder).is_dir():
-		print("Please Please Enter a valid Directory to parse, try the --help flag if you have questions, exiting!")
+		print("This is not a valid folder: ", data_folder)
+		print("Please Enter a valid Directory to parse, try the --help flag if you have questions, exiting!")
 		exit(1)
 
 	obj = Breseq(args)
